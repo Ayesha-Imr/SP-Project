@@ -64,18 +64,21 @@ function parseCSV(csvString: string): WeatherData[] {
 /**
  * Loads weather data from a CSV file if it exists, otherwise returns sample data
  */
-export async function loadWeatherData(filePath = "public/london_weather.csv"): Promise<WeatherData[]> {
+export async function loadWeatherData(filePath = "/london_weather.csv"): Promise<WeatherData[]> {
   try {
-    // Check if file exists and read it
-    const fullPath = path.resolve(process.cwd(), filePath)
-    const fileData = await fs.readFile(fullPath, "utf8")
+    // Fetch the CSV file as a static asset
+    const response = await fetch(filePath);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch file: ${response.statusText}`);
+    }
 
-    console.log(`Successfully loaded data from ${fullPath}`)
-    return parseCSV(fileData)
+    const fileData = await response.text();
+    console.log(`Successfully fetched data from ${filePath}`);
+    return parseCSV(fileData);
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.warn(`Could not load data from file: ${errorMessage}. Using sample data instead.`)
-    return sampleData
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.warn(`Could not load data from file: ${errorMessage}. Using sample data instead.`);
+    return sampleData;
   }
 }
 
