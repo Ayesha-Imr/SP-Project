@@ -2,13 +2,28 @@
 import { useState, useEffect } from "react"
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { Card, CardContent } from "@/components/ui/card"
-import type { WeatherData } from "@/lib/markov-chain"
-import { buildTransitionMatrix, getWeatherState, predictNextState } from "@/lib/markov-chain"
+import type { WeatherData, WeatherState } from "@/lib/markov-chain"
+import { buildTransitionMatrix, getWeatherState, predictNextState, weatherStates } from "@/lib/markov-chain"
+
+// Define default weather states as fallback in case the import fails
+const defaultWeatherStates = [
+  { id: "hot-dry", name: "Hot & Dry", tempRange: [25, 40] as [number, number], precipRange: [0, 1] as [number, number], cloudRange: [0, 30] as [number, number] },
+  { id: "hot-wet", name: "Hot & Wet", tempRange: [25, 40] as [number, number], precipRange: [1, 100] as [number, number], cloudRange: [30, 100] as [number, number] },
+  { id: "warm-dry", name: "Warm & Dry", tempRange: [15, 25] as [number, number], precipRange: [0, 1] as [number, number], cloudRange: [0, 30] as [number, number] },
+  { id: "warm-wet", name: "Warm & Wet", tempRange: [15, 25] as [number, number], precipRange: [1, 100] as [number, number], cloudRange: [30, 100] as [number, number] },
+  { id: "cool-dry", name: "Cool & Dry", tempRange: [5, 15] as [number, number], precipRange: [0, 1] as [number, number], cloudRange: [0, 30] as [number, number] },
+  { id: "cool-wet", name: "Cool & Wet", tempRange: [5, 15] as [number, number], precipRange: [1, 100] as [number, number], cloudRange: [30, 100] as [number, number] },
+  { id: "cold-dry", name: "Cold & Dry", tempRange: [-10, 5] as [number, number], precipRange: [0, 1] as [number, number], cloudRange: [0, 30] as [number, number] },
+  { id: "cold-wet", name: "Cold & Wet", tempRange: [-10, 5] as [number, number], precipRange: [1, 100] as [number, number], cloudRange: [30, 100] as [number, number] },
+]
 
 export function MarkovPredictionAccuracy() {
   const [data, setData] = useState<Array<{days: string, accuracy: number}>>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Use imported weather states or fall back to default
+  const availableWeatherStates = weatherStates || defaultWeatherStates
 
   useEffect(() => {
     async function fetchData() {
@@ -21,7 +36,7 @@ export function MarkovPredictionAccuracy() {
         }
 
         const result = await response.json()
-        const weatherData: WeatherData[] = result.data
+        const weatherData: WeatherData[] = result.data || []
 
         if (weatherData.length > 0) {
           // Calculate prediction accuracy based on historical data
@@ -45,77 +60,85 @@ export function MarkovPredictionAccuracy() {
 
   // Calculate prediction accuracy using historical data and Markov model
   function calculatePredictionAccuracy(weatherData: WeatherData[]) {
-    // We need enough data to make meaningful calculations
-    if (weatherData.length < 30) {
+    try {
+      // We need enough data to make meaningful calculations
+      if (weatherData.length < 30) {
+        return getDefaultAccuracyData()
+      }
+
+      // Split data into training and testing sets
+      const splitIndex = Math.floor(weatherData.length * 0.8)
+      const trainingData = weatherData.slice(0, splitIndex)
+      const testingData = weatherData.slice(splitIndex)
+
+      // Build transition matrix from training data
+      const transitionMatrix = buildTransitionMatrix(trainingData)
+      if (!transitionMatrix || transitionMatrix.length === 0) {
+        return getDefaultAccuracyData()
+      }
+
+      // Calculate accuracy for different day ranges
+      const dayRanges = [1, 2, 3, 4, 5, 6, 7]
+      const accuracyResults = dayRanges.map(days => {
+        let correctPredictions = 0
+        let totalPredictions = 0
+
+        // For each point in test data, predict N days ahead and compare with actual
+        for (let i = 0; i < testingData.length - days; i++) {
+          try {
+            const currentState = getWeatherState(testingData[i])
+            // Use available weather states (imported or default)
+            const currentStateIdx = availableWeatherStates.findIndex(s => s.id === currentState.id)
+            
+            if (currentStateIdx === -1) continue // Skip if state is invalid
+            
+            // Ensure the state index is valid before predicting
+            if (currentStateIdx >= 0 && currentStateIdx < transitionMatrix.length) {
+              // Predict state for N days ahead
+              let predictedStateIdx = currentStateIdx
+              for (let j = 0; j < days; j++) {
+                // Only predict if we have a valid index
+                if (predictedStateIdx >= 0 && predictedStateIdx < transitionMatrix.length) {
+                  predictedStateIdx = predictNextState(predictedStateIdx, transitionMatrix)
+                } else {
+                  // Invalid index, so break the loop
+                  break
+                }
+              }
+
+              // Get actual state N days ahead
+              const actualState = getWeatherState(testingData[i + days])
+              const actualStateIdx = availableWeatherStates.findIndex(s => s.id === actualState.id)
+              
+              // Consider prediction correct if states match
+              if (predictedStateIdx === actualStateIdx) {
+                correctPredictions++
+              }
+              
+              totalPredictions++
+            }
+          } catch (err) {
+            console.error("Error in prediction calculation:", err)
+            // Continue with the next iteration
+            continue
+          }
+        }
+
+        const accuracy = totalPredictions > 0 
+          ? Math.round((correctPredictions / totalPredictions) * 100)
+          : getDefaultAccuracyForDay(days)
+
+        return {
+          days: `${days} Day${days > 1 ? 's' : ''}`,
+          accuracy
+        }
+      })
+
+      return accuracyResults
+    } catch (error) {
+      console.error("Error calculating prediction accuracy:", error)
       return getDefaultAccuracyData()
     }
-
-    // Split data into training and testing sets
-    const splitIndex = Math.floor(weatherData.length * 0.8)
-    const trainingData = weatherData.slice(0, splitIndex)
-    const testingData = weatherData.slice(splitIndex)
-
-    // Build transition matrix from training data
-    const transitionMatrix = buildTransitionMatrix(trainingData)
-
-    // Calculate accuracy for different day ranges
-    const dayRanges = [1, 2, 3, 4, 5, 6, 7]
-    const accuracyResults = dayRanges.map(days => {
-      let correctPredictions = 0
-      let totalPredictions = 0
-
-      // For each point in test data, predict N days ahead and compare with actual
-      for (let i = 0; i < testingData.length - days; i++) {
-        try {
-          const currentState = getWeatherState(testingData[i])
-          // Instead of using training data to find index, use weatherStates directly
-          const currentStateIdx = weatherStates.findIndex(s => s.id === currentState.id)
-          
-          if (currentStateIdx === -1) continue // Skip if state is invalid
-          
-          // Ensure the state index is valid before predicting
-          if (currentStateIdx >= 0 && currentStateIdx < transitionMatrix.length) {
-            // Predict state for N days ahead
-            let predictedStateIdx = currentStateIdx
-            for (let j = 0; j < days; j++) {
-              // Only predict if we have a valid index
-              if (predictedStateIdx >= 0 && predictedStateIdx < transitionMatrix.length) {
-                predictedStateIdx = predictNextState(predictedStateIdx, transitionMatrix)
-              } else {
-                // Invalid index, so break the loop
-                break
-              }
-            }
-
-            // Get actual state N days ahead
-            const actualState = getWeatherState(testingData[i + days])
-            const actualStateIdx = weatherStates.findIndex(s => s.id === actualState.id)
-            
-            // Consider prediction correct if states match
-            if (predictedStateIdx === actualStateIdx) {
-              correctPredictions++
-            }
-            
-            totalPredictions++
-          }
-        } catch (err) {
-          console.error("Error in prediction calculation:", err)
-          // Continue with the next iteration
-          continue
-        }
-      }
-
-      const accuracy = totalPredictions > 0 
-        ? Math.round((correctPredictions / totalPredictions) * 100)
-        : getDefaultAccuracyForDay(days)
-
-      return {
-        days: `${days} Day${days > 1 ? 's' : ''}`,
-        accuracy
-      }
-    })
-
-    return accuracyResults
   }
   
   // Default accuracy values by day (fallback)

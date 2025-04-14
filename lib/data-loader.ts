@@ -7,7 +7,7 @@
 import type { WeatherData } from "./markov-chain"
 import path from "path"
 
-// Sample data for development (would be replaced with actual data loading in production)
+// Expanded sample data for when data loading fails
 export const sampleData: WeatherData[] = [
   {
     date: "2020-01-01",
@@ -33,81 +33,213 @@ export const sampleData: WeatherData[] = [
     pressure: 1008,
     snow_depth: 0,
   },
-  // More sample data would be added here
+  {
+    date: "2020-01-03",
+    cloud_cover: 65,
+    sunshine: 2.1,
+    global_radiation: 1.8,
+    max_temp: 9.0,
+    mean_temp: 6.5,
+    min_temp: 4.0,
+    precipitation: 1.0,
+    pressure: 1015,
+    snow_depth: 0,
+  },
+  {
+    date: "2020-01-04",
+    cloud_cover: 45,
+    sunshine: 3.5,
+    global_radiation: 2.2,
+    max_temp: 10.3,
+    mean_temp: 7.2,
+    min_temp: 4.1,
+    precipitation: 0.2,
+    pressure: 1018,
+    snow_depth: 0,
+  },
+  {
+    date: "2020-01-05",
+    cloud_cover: 30,
+    sunshine: 5.0,
+    global_radiation: 2.5,
+    max_temp: 11.2,
+    mean_temp: 8.0,
+    min_temp: 4.8,
+    precipitation: 0.0,
+    pressure: 1020,
+    snow_depth: 0,
+  },
+  {
+    date: "2020-01-06",
+    cloud_cover: 40,
+    sunshine: 4.2,
+    global_radiation: 2.3,
+    max_temp: 10.8,
+    mean_temp: 7.5,
+    min_temp: 4.2,
+    precipitation: 0.5,
+    pressure: 1016,
+    snow_depth: 0,
+  },
+  {
+    date: "2020-01-07",
+    cloud_cover: 60,
+    sunshine: 2.8,
+    global_radiation: 1.7,
+    max_temp: 9.5,
+    mean_temp: 6.8,
+    min_temp: 4.1,
+    precipitation: 1.2,
+    pressure: 1012,
+    snow_depth: 0,
+  },
+  {
+    date: "2020-01-08",
+    cloud_cover: 85,
+    sunshine: 0.5,
+    global_radiation: 1.0,
+    max_temp: 7.8,
+    mean_temp: 5.0,
+    min_temp: 2.2,
+    precipitation: 5.5,
+    pressure: 1005,
+    snow_depth: 0,
+  },
+  {
+    date: "2020-01-09",
+    cloud_cover: 90,
+    sunshine: 0.2,
+    global_radiation: 0.8,
+    max_temp: 6.5,
+    mean_temp: 3.8,
+    min_temp: 1.1,
+    precipitation: 8.2,
+    pressure: 1000,
+    snow_depth: 0,
+  },
+  {
+    date: "2020-01-10",
+    cloud_cover: 75,
+    sunshine: 1.0,
+    global_radiation: 1.2,
+    max_temp: 7.0,
+    mean_temp: 4.5,
+    min_temp: 2.0,
+    precipitation: 3.0,
+    pressure: 1003,
+    snow_depth: 0,
+  }
 ]
 
 /**
  * Parse a CSV string into an array of WeatherData objects
  */
 function parseCSV(csvString: string): WeatherData[] {
-  const lines = csvString.trim().split("\n")
-  const headers = lines[0].split(",")
+  try {
+    const lines = csvString.trim().split("\n")
+    if (lines.length < 2) {
+      throw new Error("CSV data has insufficient lines")
+    }
+    
+    const headers = lines[0].split(",")
+    
+    return lines.slice(1).map((line) => {
+      const values = line.split(",")
+      const entry: any = {}
 
-  return lines.slice(1).map((line) => {
-    const values = line.split(",")
-    const entry: any = {}
+      headers.forEach((header, index) => {
+        // Convert numeric values to numbers
+        if (header !== "date") {
+          entry[header] = Number.parseFloat(values[index])
+        } else {
+          entry[header] = values[index]
+        }
+      })
 
-    headers.forEach((header, index) => {
-      // Convert numeric values to numbers
-      if (header !== "date") {
-        entry[header] = Number.parseFloat(values[index])
-      } else {
-        entry[header] = values[index]
-      }
+      return entry as WeatherData
     })
-
-    return entry as WeatherData
-  })
+  } catch (e) {
+    console.error("Failed to parse CSV data:", e)
+    return [] // Return empty array on parsing error
+  }
 }
 
 /**
  * Loads weather data from a CSV file if it exists, otherwise returns sample data
  */
 export async function loadWeatherData(relativePath = "london_weather.csv"): Promise<WeatherData[]> {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
-  const fileUrl = `${appUrl}/${relativePath}`;
+  // Try multiple possible URLs for the data file
+  const possibleUrls = [
+    `/api/data/${relativePath}`, // Try API endpoint first
+    `/${relativePath}`,          // Then try root path
+    `/public/${relativePath}`,   // Then try public path
+    `https://raw.githubusercontent.com/emmanuelfwerr/London-Weather-Data/main/london_weather.csv` // External URL as fallback
+  ];
+  
+  // In development, also try localhost URL
+  if (process.env.NODE_ENV === 'development') {
+    const devPort = process.env.PORT || 3000;
+    possibleUrls.unshift(`http://localhost:${devPort}/${relativePath}`);
+  }
 
-  try {
-    // Attempt 1: Fetch via HTTP (preferred for Vercel)
-    console.log(`Attempting to fetch data from URL: ${fileUrl}`);
-    const response = await fetch(fileUrl);
-
-    if (!response.ok) {
-      // Log the status and statusText for more detailed debugging
-      console.warn(`Fetch failed with status: ${response.status} ${response.statusText}`);
-      throw new Error(`Failed to fetch ${fileUrl}: ${response.statusText}`);
-    }
-
-    const fileData = await response.text();
-    console.log(`Successfully loaded data via fetch from ${fileUrl}`);
-    return parseCSV(fileData);
-
-  } catch (fetchError: unknown) {
-    const fetchErrorMessage = fetchError instanceof Error ? fetchError.message : "Unknown fetch error";
-    console.warn(`Could not load data via fetch (${fetchErrorMessage}). Falling back to sample data.`);
-    
-    // In a browser environment, we can't use fs, so return sample data
-    if (typeof window !== 'undefined') {
-      console.log('Running in browser environment, using sample data');
-      return sampleData;
-    }
-    
-    // Only attempt filesystem access on server-side
+  // Try each URL in sequence
+  for (const url of possibleUrls) {
     try {
-      // Dynamically import fs/promises only on server side
-      const fs = await import('fs/promises');
-      const filePath = path.join(process.cwd(), "public", relativePath);
-      console.log(`Attempting to read data from filesystem: ${filePath}`);
-      const fileData = await fs.readFile(filePath, "utf8");
-      console.log(`Successfully loaded data from filesystem: ${filePath}`);
-      return parseCSV(fileData);
-    } catch (fsError: unknown) {
-      const fsErrorMessage = fsError instanceof Error ? fsError.message : "Unknown filesystem error";
-      console.warn(`Could not load data from filesystem (${fsErrorMessage}). Using sample data instead.`);
-      // Fallback to sample data
-      return sampleData;
+      console.log(`Attempting to fetch data from URL: ${url}`);
+      const response = await fetch(url, { 
+        method: 'GET',
+        cache: 'no-cache', // Bypass cache
+        headers: {
+          'Content-Type': 'text/csv',
+          'Cache-Control': 'no-cache'
+        }
+      });
+
+      if (!response.ok) {
+        console.warn(`Fetch failed for ${url} with status: ${response.status}`);
+        continue; // Try next URL
+      }
+
+      const fileData = await response.text();
+      if (fileData.length < 100) {
+        console.warn(`Data from ${url} too short (${fileData.length} bytes), skipping`);
+        continue;
+      }
+      
+      const parsedData = parseCSV(fileData);
+      if (parsedData.length > 0) {
+        console.log(`Successfully loaded ${parsedData.length} records from ${url}`);
+        return parsedData;
+      } else {
+        console.warn(`Failed to parse data from ${url}`);
+      }
+    } catch (error) {
+      console.warn(`Error fetching from ${url}:`, error);
+      // Continue to next URL
     }
   }
+  
+  // If we're on the server, try filesystem as last resort
+  if (typeof window === 'undefined') {
+    try {
+      const fs = await import('fs/promises');
+      const filePath = path.join(process.cwd(), 'public', relativePath);
+      console.log(`Attempting to read data from filesystem: ${filePath}`);
+      const fileData = await fs.readFile(filePath, "utf8");
+      
+      const parsedData = parseCSV(fileData);
+      if (parsedData.length > 0) {
+        console.log(`Successfully loaded ${parsedData.length} records from filesystem`);
+        return parsedData;
+      }
+    } catch (error) {
+      console.error(`Filesystem fallback failed:`, error);
+    }
+  }
+  
+  // All attempts failed, use sample data
+  console.log('All data loading attempts failed, using sample data');
+  return sampleData;
 }
 
 /**

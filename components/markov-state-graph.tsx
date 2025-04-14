@@ -5,8 +5,20 @@ import * as d3 from "d3"
 import type { WeatherData } from "@/lib/markov-chain"
 import { buildTransitionMatrix, weatherStates } from "@/lib/markov-chain"
 
+// Define default weather states in case import fails
+const defaultWeatherStates = [
+  { id: "hot-dry", name: "Hot & Dry" },
+  { id: "hot-wet", name: "Hot & Wet" },
+  { id: "warm-dry", name: "Warm & Dry" },
+  { id: "warm-wet", name: "Warm & Wet" },
+  { id: "cool-dry", name: "Cool & Dry" },
+  { id: "cool-wet", name: "Cool & Wet" },
+  { id: "cold-dry", name: "Cold & Dry" },
+  { id: "cold-wet", name: "Cold & Wet" },
+]
+
 export function MarkovStateGraph() {
-  const svgRef = useRef(null)
+  const svgRef = useRef<SVGSVGElement | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -23,10 +35,10 @@ export function MarkovStateGraph() {
         }
         
         const result = await response.json()
-        const weatherData: WeatherData[] = result.data
+        const weatherData: WeatherData[] = result.data || []
         
         // Generate graph data from weather data or use defaults
-        const graphData = weatherData.length > 0 
+        const graphData = weatherData && weatherData.length > 0 
           ? generateGraphDataFromWeatherData(weatherData)
           : getDefaultGraphData()
           
@@ -48,83 +60,91 @@ export function MarkovStateGraph() {
   
   // Transform weather data into graph nodes and links
   function generateGraphDataFromWeatherData(weatherData: WeatherData[]) {
-    // Define the simplified display nodes
-    const nodes = [
-      { id: "Sunny", group: 1 },
-      { id: "Partly Cloudy", group: 2 },
-      { id: "Cloudy", group: 2 },
-      { id: "Light Rain", group: 3 },
-      { id: "Heavy Rain", group: 3 },
-    ]
-    
-    // Build full transition matrix from data
-    const fullMatrix = buildTransitionMatrix(weatherData)
-    
-    // Mapping of internal state IDs to display states
-    const stateMapping: {[key: string]: number} = {
-      'hot-dry': 0,
-      'warm-dry': 0,
-      'hot-wet': 1,
-      'warm-wet': 1,
-      'cool-dry': 2,
-      'cool-wet': 3,
-      'cold-dry': 2,
-      'cold-wet': 4
-    }
-    
-    // Simplify the transition matrix to 5x5
-    const simplifiedMatrix = Array(5).fill(0).map(() => Array(5).fill(0))
-    const stateCounts = Array(5).fill(0)
-    
-    // For each weather state in the full matrix
-    for (let fromIdx = 0; fromIdx < weatherStates.length; fromIdx++) {
-      const fromDisplayIdx = stateMapping[weatherStates[fromIdx].id]
+    try {
+      // Define the simplified display nodes
+      const nodes = [
+        { id: "Sunny", group: 1 },
+        { id: "Partly Cloudy", group: 2 },
+        { id: "Cloudy", group: 2 },
+        { id: "Light Rain", group: 3 },
+        { id: "Heavy Rain", group: 3 },
+      ]
       
-      for (let toIdx = 0; toIdx < weatherStates.length; toIdx++) {
-        const toDisplayIdx = stateMapping[weatherStates[toIdx].id] 
+      // Build full transition matrix from data
+      const fullMatrix = buildTransitionMatrix(weatherData)
+      
+      // Mapping of internal state IDs to display states
+      const stateMapping: {[key: string]: number} = {
+        'hot-dry': 0,
+        'warm-dry': 0,
+        'hot-wet': 1,
+        'warm-wet': 1,
+        'cool-dry': 2,
+        'cool-wet': 3,
+        'cold-dry': 2,
+        'cold-wet': 4
+      }
+      
+      // Simplify the transition matrix to 5x5
+      const simplifiedMatrix = Array(5).fill(0).map(() => Array(5).fill(0))
+      const stateCounts = Array(5).fill(0)
+      
+      // For each weather state in the full matrix
+      const states = weatherStates || defaultWeatherStates
+      for (let fromIdx = 0; fromIdx < states.length; fromIdx++) {
+        const fromDisplayIdx = stateMapping[states[fromIdx].id]
         
-        // Add probability to the simplified matrix
-        simplifiedMatrix[fromDisplayIdx][toDisplayIdx] += fullMatrix[fromIdx][toIdx]
+        for (let toIdx = 0; toIdx < states.length; toIdx++) {
+          const toDisplayIdx = stateMapping[states[toIdx].id] 
+          
+          // Add probability to the simplified matrix
+          if (fullMatrix[fromIdx] && fullMatrix[fromIdx][toIdx] !== undefined) {
+            simplifiedMatrix[fromDisplayIdx][toDisplayIdx] += fullMatrix[fromIdx][toIdx]
+          }
+        }
+        
+        stateCounts[fromDisplayIdx]++
       }
       
-      stateCounts[fromDisplayIdx]++
-    }
-    
-    // Normalize the matrix so each row sums to 1
-    for (let i = 0; i < 5; i++) {
-      const rowSum = simplifiedMatrix[i].reduce((a, b) => a + b, 0)
-      if (rowSum > 0) {
-        for (let j = 0; j < 5; j++) {
-          simplifiedMatrix[i][j] /= rowSum
-        }
-      } else {
-        // If a state doesn't exist in the data, use default probabilities
-        const defaultLinks = getDefaultLinks()
-        const rowLinks = defaultLinks.filter(link => link.source === nodes[i].id)
-        for (let j = 0; j < 5; j++) {
-          const link = rowLinks.find(link => link.target === nodes[j].id)
-          simplifiedMatrix[i][j] = link ? link.value : 0
+      // Normalize the matrix so each row sums to 1
+      for (let i = 0; i < 5; i++) {
+        const rowSum = simplifiedMatrix[i].reduce((a, b) => a + b, 0)
+        if (rowSum > 0) {
+          for (let j = 0; j < 5; j++) {
+            simplifiedMatrix[i][j] /= rowSum
+          }
+        } else {
+          // If a state doesn't exist in the data, use default probabilities
+          const defaultLinks = getDefaultLinks()
+          const rowLinks = defaultLinks.filter(link => link.source === nodes[i].id)
+          for (let j = 0; j < 5; j++) {
+            const link = rowLinks.find(link => link.target === nodes[j].id)
+            simplifiedMatrix[i][j] = link ? link.value : 0
+          }
         }
       }
-    }
-    
-    // Create links from the simplified matrix
-    const links = []
-    const displayStateNames = ["Sunny", "Partly Cloudy", "Cloudy", "Light Rain", "Heavy Rain"]
-    
-    for (let i = 0; i < 5; i++) {
-      for (let j = 0; j < 5; j++) {
-        if (simplifiedMatrix[i][j] > 0) {
-          links.push({
-            source: displayStateNames[i],
-            target: displayStateNames[j],
-            value: simplifiedMatrix[i][j]
-          })
+      
+      // Create links from the simplified matrix
+      const links = []
+      const displayStateNames = ["Sunny", "Partly Cloudy", "Cloudy", "Light Rain", "Heavy Rain"]
+      
+      for (let i = 0; i < 5; i++) {
+        for (let j = 0; j < 5; j++) {
+          if (simplifiedMatrix[i][j] > 0) {
+            links.push({
+              source: displayStateNames[i],
+              target: displayStateNames[j],
+              value: simplifiedMatrix[i][j]
+            })
+          }
         }
       }
+      
+      return { nodes, links }
+    } catch (err) {
+      console.error("Error generating graph data:", err)
+      return getDefaultGraphData()
     }
-    
-    return { nodes, links }
   }
   
   // Default graph data
@@ -177,8 +197,10 @@ export function MarkovStateGraph() {
   }
 
   // Render D3 graph with provided nodes and links
-  function renderGraph(nodes, links) {
+  function renderGraph(nodes: { id: string; group: number }[], links: { source: string; target: string; value: number }[]) {
     if (!svgRef.current) return
+
+    type NodeType = d3.SimulationNodeDatum & { id: string; group: number };
 
     // Clear any existing SVG content
     d3.select(svgRef.current).selectAll("*").remove()
@@ -193,18 +215,18 @@ export function MarkovStateGraph() {
       .attr("width", containerWidth)
       .attr("height", containerHeight)
       .attr("viewBox", [0, 0, containerWidth, containerHeight])
-      .attr("style", "max-width: 100%; height: auto;")
-
     // Create a force simulation
     const simulation = d3
-      .forceSimulation(nodes)
+      .forceSimulation(nodes as NodeType[])
       .force(
         "link",
         d3
           .forceLink(links)
-          .id((d) => d.id)
+          .id((d: any) => d.id)
           .distance(100),
       )
+      .force("charge", d3.forceManyBody().strength(-300))
+      .force("center", d3.forceCenter(containerWidth / 2, containerHeight / 2))
       .force("charge", d3.forceManyBody().strength(-300))
       .force("center", d3.forceCenter(containerWidth / 2, containerHeight / 2))
 
@@ -235,7 +257,7 @@ export function MarkovStateGraph() {
       })
       .attr("stroke", "#fff")
       .attr("stroke-width", 1.5)
-      .call(drag(simulation))
+      .call(drag as any, simulation)
 
     // Add labels to the nodes
     const labels = svg
@@ -252,38 +274,41 @@ export function MarkovStateGraph() {
     // Update the positions on each tick of the simulation
     simulation.on("tick", () => {
       link
-        .attr("x1", (d) => d.source.x)
-        .attr("y1", (d) => d.source.y)
-        .attr("x2", (d) => d.target.x)
-        .attr("y2", (d) => d.target.y)
+        .attr("x1", (d: any) => d.source.x)
+        .attr("y1", (d: any) => d.source.y)
+        .attr("x2", (d: any) => d.target.x)
+        .attr("y2", (d: any) => d.target.y)
 
       node
-        .attr("cx", (d) => (d.x = Math.max(20, Math.min(containerWidth - 20, d.x))))
-        .attr("cy", (d) => (d.y = Math.max(20, Math.min(containerHeight - 20, d.y))))
+        .attr("cx", (d: any) => (d.x = Math.max(20, Math.min(containerWidth - 20, d.x))))
+        .attr("cy", (d: any) => (d.y = Math.max(20, Math.min(containerHeight - 20, d.y))))
 
-      labels.attr("x", (d) => d.x).attr("y", (d) => d.y)
+      labels.attr("x", (d: any) => d.x).attr("y", (d: any) => d.y)
     })
 
     // Drag functionality
-    function drag(simulation) {
-      function dragstarted(event) {
+    function drag(simulation: d3.Simulation<NodeType, undefined>) {
+      function dragstarted(event: d3.D3DragEvent<SVGCircleElement, { id: string; group: number }, any>) {
         if (!event.active) simulation.alphaTarget(0.3).restart()
         event.subject.fx = event.subject.x
         event.subject.fy = event.subject.y
       }
 
-      function dragged(event) {
+      function dragged(event: d3.D3DragEvent<SVGCircleElement, { id: string; group: number }, any>) {
         event.subject.fx = event.x
         event.subject.fy = event.y
       }
 
-      function dragended(event) {
+      function dragended(event: d3.D3DragEvent<SVGCircleElement, { id: string; group: number }, any>) {
         if (!event.active) simulation.alphaTarget(0)
         event.subject.fx = null
         event.subject.fy = null
       }
 
-      return d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended)
+      return d3.drag<SVGCircleElement, { id: string; group: number }, any>()
+        .on("start", dragstarted)
+        .on("drag", dragged)
+        .on("end", dragended);
     }
 
     // Cleanup
