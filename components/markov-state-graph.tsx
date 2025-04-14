@@ -22,41 +22,43 @@ export function MarkovStateGraph() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Render the hardcoded graph immediately to ensure something appears
   useEffect(() => {
-    async function fetchDataAndRender() {
-      try {
-        setLoading(true)
-        
-        // Fetch weather data from API
-        const response = await fetch("/api/weather-data")
-        
-        if (!response.ok) {
-          throw new Error("Failed to fetch weather data")
-        }
-        
-        const result = await response.json()
-        const weatherData: WeatherData[] = result.data || []
-        
-        // Generate graph data from weather data or use defaults
-        const graphData = weatherData && weatherData.length > 0 
-          ? generateGraphDataFromWeatherData(weatherData)
-          : getDefaultGraphData()
-          
-        // Render the graph
-        renderGraph(graphData.nodes, graphData.links)
-      } catch (err) {
-        console.error("Error fetching data:", err)
-        setError("Failed to load state graph data")
-        // Render with default data on error
-        const defaultData = getDefaultGraphData()
-        renderGraph(defaultData.nodes, defaultData.links)
-      } finally {
-        setLoading(false)
-      }
-    }
+    // Immediately render with default data first
+    const defaultData = getDefaultGraphData()
+    renderGraph(defaultData.nodes, defaultData.links)
+    setLoading(false)
     
-    fetchDataAndRender()
-  }, [])
+    // Then try to load actual data
+    fetchDataAndRender().catch(err => {
+      console.error("Failed to load actual graph data:", err);
+      // Already rendered with defaults, so just log the error
+    });
+  }, []);
+  
+  // Separate the data fetching from the immediate rendering
+  async function fetchDataAndRender() {
+    try {
+      // Fetch weather data from API
+      const response = await fetch("/api/weather-data")
+      
+      if (!response.ok) {
+        throw new Error("Failed to fetch weather data")
+      }
+      
+      const result = await response.json()
+      const weatherData: WeatherData[] = result.data || []
+      
+      // Only re-render if we got valid data
+      if (weatherData && weatherData.length > 0) {
+        const graphData = generateGraphDataFromWeatherData(weatherData)
+        renderGraph(graphData.nodes, graphData.links)
+      }
+    } catch (err) {
+      console.error("Error fetching data:", err)
+      // We already rendered with default data, so no need to do anything here
+    }
+  }
   
   // Transform weather data into graph nodes and links
   function generateGraphDataFromWeatherData(weatherData: WeatherData[]) {
@@ -198,134 +200,212 @@ export function MarkovStateGraph() {
 
   // Render D3 graph with provided nodes and links
   function renderGraph(nodes: { id: string; group: number }[], links: { source: string; target: string; value: number }[]) {
-    if (!svgRef.current) return
+    try {
+      if (!svgRef.current) {
+        console.error("SVG ref is not available");
+        return;
+      }
 
-    type NodeType = d3.SimulationNodeDatum & { id: string; group: number };
+      type NodeType = d3.SimulationNodeDatum & { id: string; group: number };
 
-    // Clear any existing SVG content
-    d3.select(svgRef.current).selectAll("*").remove()
+      // Clear any existing SVG content
+      d3.select(svgRef.current).selectAll("*").remove()
 
-    // Get the dimensions of the container
-    const containerWidth = svgRef.current.clientWidth || 600
-    const containerHeight = svgRef.current.clientHeight || 400
+      // Get the dimensions of the container
+      const containerWidth = svgRef.current.clientWidth || 600
+      const containerHeight = svgRef.current.clientHeight || 400
 
-    // Create the SVG container
-    const svg = d3
-      .select(svgRef.current)
-      .attr("width", containerWidth)
-      .attr("height", containerHeight)
-      .attr("viewBox", [0, 0, containerWidth, containerHeight])
-    // Create a force simulation
-    const simulation = d3
-      .forceSimulation(nodes as NodeType[])
-      .force(
-        "link",
-        d3
-          .forceLink(links)
-          .id((d: any) => d.id)
-          .distance(100),
-      )
-      .force("charge", d3.forceManyBody().strength(-300))
-      .force("center", d3.forceCenter(containerWidth / 2, containerHeight / 2))
-      .force("charge", d3.forceManyBody().strength(-300))
-      .force("center", d3.forceCenter(containerWidth / 2, containerHeight / 2))
+      // Create the SVG container
+      const svg = d3
+        .select(svgRef.current)
+        .attr("width", containerWidth)
+        .attr("height", containerHeight)
+        .attr("viewBox", [0, 0, containerWidth, containerHeight])
+        .attr("style", "max-width: 100%; height: auto;") // Ensure proper sizing
 
-    // Create the links
-    const link = svg
-      .append("g")
-      .selectAll("line")
-      .data(links)
-      .join("line")
-      .attr("stroke", (d) => {
-        const value = d.value
-        return d3.interpolateBlues(value * 2)
+      // Deep clone the nodes and links to avoid mutation issues
+      const safeNodes = JSON.parse(JSON.stringify(nodes))
+      const safeLinks = JSON.parse(JSON.stringify(links))
+      
+      // Create a force simulation
+      const simulation = d3
+        .forceSimulation(safeNodes as NodeType[])
+        .force(
+          "link",
+          d3
+            .forceLink(safeLinks)
+            .id((d: any) => d.id)
+            .distance(100),
+        )
+        .force("charge", d3.forceManyBody().strength(-300))
+        .force("center", d3.forceCenter(containerWidth / 2, containerHeight / 2))
+
+      // Create the links
+      const link = svg
+        .append("g")
+        .selectAll("line")
+        .data(safeLinks)
+        .join("line")
+        .attr("stroke", (d) => {
+          const value = d.value
+          return d3.interpolateBlues(value * 2)
+        })
+        .attr("stroke-width", (d) => Math.max(1, d.value * 5))
+        .attr("stroke-opacity", 0.6)
+
+      // Create the nodes
+      const node = svg
+        .append("g")
+        .selectAll("circle")
+        .data(safeNodes)
+        .join("circle")
+        .attr("r", 20)
+        .attr("fill", (d) => {
+          if (d.group === 1) return "#fde68a" // Sunny - yellow
+          if (d.group === 2) return "#93c5fd" // Cloudy - blue
+          return "#60a5fa" // Rainy - darker blue
+        })
+        .attr("stroke", "#fff")
+        .attr("stroke-width", 1.5)
+        .call(drag as any, simulation)
+
+      // Add labels to the nodes
+      const labels = svg
+        .append("g")
+        .selectAll("text")
+        .data(safeNodes)
+        .join("text")
+        .attr("text-anchor", "middle")
+        .attr("dy", 30)
+        .text((d) => d.id)
+        .attr("font-size", "10px")
+        .attr("pointer-events", "none")
+
+      // Update the positions on each tick of the simulation
+      simulation.on("tick", () => {
+        link
+          .attr("x1", (d: any) => d.source.x)
+          .attr("y1", (d: any) => d.source.y)
+          .attr("x2", (d: any) => d.target.x)
+          .attr("y2", (d: any) => d.target.y)
+
+        node
+          .attr("cx", (d: any) => (d.x = Math.max(20, Math.min(containerWidth - 20, d.x))))
+          .attr("cy", (d: any) => (d.y = Math.max(20, Math.min(containerHeight - 20, d.y))))
+
+        labels.attr("x", (d: any) => d.x).attr("y", (d: any) => d.y)
       })
-      .attr("stroke-width", (d) => Math.max(1, d.value * 5))
-      .attr("stroke-opacity", 0.6)
 
-    // Create the nodes
-    const node = svg
-      .append("g")
-      .selectAll("circle")
-      .data(nodes)
-      .join("circle")
-      .attr("r", 20)
-      .attr("fill", (d) => {
-        if (d.group === 1) return "#fde68a" // Sunny - yellow
-        if (d.group === 2) return "#93c5fd" // Cloudy - blue
-        return "#60a5fa" // Rainy - darker blue
-      })
-      .attr("stroke", "#fff")
-      .attr("stroke-width", 1.5)
-      .call(drag as any, simulation)
+      // Drag functionality
+      function drag(simulation: d3.Simulation<NodeType, undefined>) {
+        function dragstarted(event: any) {
+          if (!event.active) simulation.alphaTarget(0.3).restart()
+          event.subject.fx = event.subject.x
+          event.subject.fy = event.subject.y
+        }
 
-    // Add labels to the nodes
-    const labels = svg
-      .append("g")
-      .selectAll("text")
-      .data(nodes)
-      .join("text")
-      .attr("text-anchor", "middle")
-      .attr("dy", 30)
-      .text((d) => d.id)
-      .attr("font-size", "10px")
-      .attr("pointer-events", "none")
+        function dragged(event: any) {
+          event.subject.fx = event.x
+          event.subject.fy = event.y
+        }
 
-    // Update the positions on each tick of the simulation
-    simulation.on("tick", () => {
-      link
-        .attr("x1", (d: any) => d.source.x)
-        .attr("y1", (d: any) => d.source.y)
-        .attr("x2", (d: any) => d.target.x)
-        .attr("y2", (d: any) => d.target.y)
+        function dragended(event: any) {
+          if (!event.active) simulation.alphaTarget(0)
+          event.subject.fx = null
+          event.subject.fy = null
+        }
 
-      node
-        .attr("cx", (d: any) => (d.x = Math.max(20, Math.min(containerWidth - 20, d.x))))
-        .attr("cy", (d: any) => (d.y = Math.max(20, Math.min(containerHeight - 20, d.y))))
-
-      labels.attr("x", (d: any) => d.x).attr("y", (d: any) => d.y)
-    })
-
-    // Drag functionality
-    function drag(simulation: d3.Simulation<NodeType, undefined>) {
-      function dragstarted(event: d3.D3DragEvent<SVGCircleElement, { id: string; group: number }, any>) {
-        if (!event.active) simulation.alphaTarget(0.3).restart()
-        event.subject.fx = event.subject.x
-        event.subject.fy = event.subject.y
+        return d3.drag()
+          .on("start", dragstarted)
+          .on("drag", dragged)
+          .on("end", dragended);
       }
 
-      function dragged(event: d3.D3DragEvent<SVGCircleElement, { id: string; group: number }, any>) {
-        event.subject.fx = event.x
-        event.subject.fy = event.y
+      // Return cleanup function
+      return () => {
+        simulation.stop()
       }
-
-      function dragended(event: d3.D3DragEvent<SVGCircleElement, { id: string; group: number }, any>) {
-        if (!event.active) simulation.alphaTarget(0)
-        event.subject.fx = null
-        event.subject.fy = null
-      }
-
-      return d3.drag<SVGCircleElement, { id: string; group: number }, any>()
-        .on("start", dragstarted)
-        .on("drag", dragged)
-        .on("end", dragended);
+    } catch (err) {
+      console.error("Error rendering graph:", err);
+      // If D3 rendering fails, render a basic SVG with text
+      renderBasicFallbackGraph();
     }
-
-    // Cleanup
-    return () => {
-      simulation.stop()
+  }
+  
+  // Ultimate fallback - renders a basic SVG with text if D3 fails completely
+  function renderBasicFallbackGraph() {
+    try {
+      if (!svgRef.current) return;
+      
+      // Clear svg
+      const svg = d3.select(svgRef.current);
+      svg.selectAll("*").remove();
+      
+      // Get dimensions
+      const width = svgRef.current.clientWidth || 600;
+      const height = svgRef.current.clientHeight || 400;
+      
+      // Set attributes
+      svg
+        .attr("width", width)
+        .attr("height", height)
+        .attr("viewBox", [0, 0, width, height]);
+      
+      // Add a background rect
+      svg.append("rect")
+        .attr("width", width)
+        .attr("height", height)
+        .attr("fill", "#f1f5f9");
+      
+      // Add title text
+      svg.append("text")
+        .attr("x", width / 2)
+        .attr("y", height / 2 - 20)
+        .attr("text-anchor", "middle")
+        .attr("font-size", "18px")
+        .attr("font-weight", "bold")
+        .text("Markov State Graph");
+        
+      // Add description text
+      svg.append("text")
+        .attr("x", width / 2)
+        .attr("y", height / 2 + 20)
+        .attr("text-anchor", "middle")
+        .attr("font-size", "14px")
+        .text("Shows weather state transitions based on historical data");
+        
+      // Add node examples
+      const states = ["Sunny", "Partly Cloudy", "Cloudy", "Light Rain", "Heavy Rain"];
+      const colors = ["#fde68a", "#93c5fd", "#93c5fd", "#60a5fa", "#60a5fa"];
+      
+      states.forEach((state, i) => {
+        const x = width / 2 - 200 + (i * 100);
+        const y = height / 2 + 60;
+        
+        // Circle
+        svg.append("circle")
+          .attr("cx", x)
+          .attr("cy", y)
+          .attr("r", 10)
+          .attr("fill", colors[i]);
+          
+        // Label  
+        svg.append("text")
+          .attr("x", x)
+          .attr("y", y + 25)
+          .attr("text-anchor", "middle")
+          .attr("font-size", "10px")
+          .text(state);
+      });
+    } catch (e) {
+      console.error("Even basic fallback rendering failed:", e);
+      // At this point, the loading/error states will show
     }
   }
 
-  if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-muted-foreground">Loading state graph data...</p>
-      </div>
-    )
-  }
-
-  if (error) {
+  // We don't show loading state because we render with default data immediately
+  // Only show error if both default rendering and fallback rendering failed
+  if (error && !svgRef.current) {
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-red-500">{error}</p>
@@ -333,5 +413,5 @@ export function MarkovStateGraph() {
     )
   }
 
-  return <svg ref={svgRef} className="w-full h-full" />
+  return <svg ref={svgRef} className="w-full h-full min-h-[400px]" />
 }
