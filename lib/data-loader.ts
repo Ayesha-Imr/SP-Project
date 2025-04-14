@@ -5,7 +5,6 @@
  */
 
 import type { WeatherData } from "./markov-chain"
-import fs from "fs/promises"
 import path from "path"
 
 // Sample data for development (would be replaced with actual data loading in production)
@@ -85,11 +84,19 @@ export async function loadWeatherData(relativePath = "london_weather.csv"): Prom
 
   } catch (fetchError: unknown) {
     const fetchErrorMessage = fetchError instanceof Error ? fetchError.message : "Unknown fetch error";
-    console.warn(`Could not load data via fetch (${fetchErrorMessage}). Falling back.`);
-
-    // Attempt 2: Filesystem (might work locally, less likely on Vercel serverless)
-    const filePath = path.join(process.cwd(), "public", relativePath);
+    console.warn(`Could not load data via fetch (${fetchErrorMessage}). Falling back to sample data.`);
+    
+    // In a browser environment, we can't use fs, so return sample data
+    if (typeof window !== 'undefined') {
+      console.log('Running in browser environment, using sample data');
+      return sampleData;
+    }
+    
+    // Only attempt filesystem access on server-side
     try {
+      // Dynamically import fs/promises only on server side
+      const fs = await import('fs/promises');
+      const filePath = path.join(process.cwd(), "public", relativePath);
       console.log(`Attempting to read data from filesystem: ${filePath}`);
       const fileData = await fs.readFile(filePath, "utf8");
       console.log(`Successfully loaded data from filesystem: ${filePath}`);
@@ -97,7 +104,7 @@ export async function loadWeatherData(relativePath = "london_weather.csv"): Prom
     } catch (fsError: unknown) {
       const fsErrorMessage = fsError instanceof Error ? fsError.message : "Unknown filesystem error";
       console.warn(`Could not load data from filesystem (${fsErrorMessage}). Using sample data instead.`);
-      // Attempt 3: Fallback to sample data
+      // Fallback to sample data
       return sampleData;
     }
   }
