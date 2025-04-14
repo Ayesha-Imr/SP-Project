@@ -64,19 +64,42 @@ function parseCSV(csvString: string): WeatherData[] {
 /**
  * Loads weather data from a CSV file if it exists, otherwise returns sample data
  */
-export async function loadWeatherData(filePath = "public/london_weather.csv"): Promise<WeatherData[]> {
-  try {
-    // Construct the absolute path to the file
-    const absolutePath = path.join(process.cwd(), filePath);
+export async function loadWeatherData(relativePath = "london_weather.csv"): Promise<WeatherData[]> {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3000}`;
+  const fileUrl = `${appUrl}/${relativePath}`;
 
-    // Read the file from the filesystem
-    const fileData = await fs.readFile(absolutePath, "utf8");
-    console.log(`Successfully loaded data from ${absolutePath}`);
+  try {
+    // Attempt 1: Fetch via HTTP (preferred for Vercel)
+    console.log(`Attempting to fetch data from URL: ${fileUrl}`);
+    const response = await fetch(fileUrl);
+
+    if (!response.ok) {
+      // Log the status and statusText for more detailed debugging
+      console.warn(`Fetch failed with status: ${response.status} ${response.statusText}`);
+      throw new Error(`Failed to fetch ${fileUrl}: ${response.statusText}`);
+    }
+
+    const fileData = await response.text();
+    console.log(`Successfully loaded data via fetch from ${fileUrl}`);
     return parseCSV(fileData);
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.warn(`Could not load data from file: ${errorMessage}. Using sample data instead.`);
-    return sampleData;
+
+  } catch (fetchError: unknown) {
+    const fetchErrorMessage = fetchError instanceof Error ? fetchError.message : "Unknown fetch error";
+    console.warn(`Could not load data via fetch (${fetchErrorMessage}). Falling back.`);
+
+    // Attempt 2: Filesystem (might work locally, less likely on Vercel serverless)
+    const filePath = path.join(process.cwd(), "public", relativePath);
+    try {
+      console.log(`Attempting to read data from filesystem: ${filePath}`);
+      const fileData = await fs.readFile(filePath, "utf8");
+      console.log(`Successfully loaded data from filesystem: ${filePath}`);
+      return parseCSV(fileData);
+    } catch (fsError: unknown) {
+      const fsErrorMessage = fsError instanceof Error ? fsError.message : "Unknown filesystem error";
+      console.warn(`Could not load data from filesystem (${fsErrorMessage}). Using sample data instead.`);
+      // Attempt 3: Fallback to sample data
+      return sampleData;
+    }
   }
 }
 
