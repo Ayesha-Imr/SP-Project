@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { WeatherData } from "@/lib/markov-chain"
@@ -33,15 +33,43 @@ export function DatasetStats() {
     fetchData()
   }, [])
 
-  // Calculate date range
-  const dateRange =
-    data.length > 0
-      ? {
-          start: new Date(data[0].date).getFullYear(),
-          end: new Date(data[data.length - 1].date).getFullYear(),
-          years: new Date(data[data.length - 1].date).getFullYear() - new Date(data[0].date).getFullYear() + 1,
-        }
-      : { start: 1979, end: 2020, years: 41 }
+  // Calculate date range with fallback to hardcoded values
+  const dateRange = useMemo(() => {
+    // Default hardcoded values
+    const defaultRange = { start: 1979, end: 2021, years: 43 };
+    
+    if (!data || data.length === 0) {
+      return defaultRange;
+    }
+    
+    try {
+      // Sort data by date to ensure we get the actual first and last dates
+      const sortedData = [...data].sort((a, b) => 
+        new Date(a.date).getTime() - new Date(b.date).getTime());
+      
+      const startDate = new Date(sortedData[0].date);
+      const endDate = new Date(sortedData[sortedData.length - 1].date);
+      
+      // Check if dates are valid before using them
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        console.warn('Invalid dates in data, using default range');
+        return defaultRange;
+      }
+      
+      const startYear = startDate.getFullYear();
+      const endYear = endDate.getFullYear();
+      const years = endYear - startYear + 1;
+      
+      return {
+        start: startYear,
+        end: endYear,
+        years: years
+      };
+    } catch (err) {
+      console.error('Error calculating date range:', err);
+      return defaultRange;
+    }
+  }, [data]);
 
   return (
     <div className="space-y-6">
